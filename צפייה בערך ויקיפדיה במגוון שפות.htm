@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>סטטיסטיקות צפייה בערך ויקיפדיה</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gradient-to-b from-indigo-50 via-white to-indigo-100 min-h-screen p-6">
+  <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-2xl p-8">
+    <h1 class="text-3xl font-extrabold text-center text-indigo-700 mb-8">סטטיסטיקות צפייה בערך ויקיפדיה</h1>
+
+    <form id="searchForm" class="space-y-6">
+      <div>
+        <label for="articleName" class="block text-sm font-semibold text-gray-700 mb-1">שם הערך (בעברית):</label>
+        <input type="text" id="articleName" name="articleName" required class="w-full p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+      </div>
+      <div>
+        <label for="dateRange" class="block text-sm font-semibold text-gray-700 mb-1">טווח תאריכים:</label>
+        <select id="dateRange" name="dateRange" class="w-full p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+          <option value="7">7 ימים</option>
+          <option value="30" selected>30 ימים</option>
+          <option value="90">90 ימים</option>
+        </select>
+      </div>
+      <button type="submit" class="w-full bg-indigo-600 text-white text-lg py-3 rounded-xl hover:bg-indigo-700 transition">חפש</button>
+    </form>
+
+    <div id="results" class="mt-10 hidden space-y-10">
+      <div class="bg-indigo-50 rounded-xl p-6 shadow-inner">
+        <h2 class="text-2xl font-bold text-indigo-800 mb-2">צפיות בערך בעברית</h2>
+        <p id="hebrewViews" class="text-gray-800 text-lg"></p>
+        <div class="bg-white p-4 mt-4 rounded-xl shadow">
+          <canvas id="viewsChart"></canvas>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl p-6 shadow-inner">
+        <h2 class="text-2xl font-bold text-indigo-800 mb-4">צפיות בשפות נוספות (מדורגות)</h2>
+        <ul id="otherLanguages" class="space-y-3 text-gray-700 text-sm"></ul>
+
+        <div class="mt-6">
+          <label for="languageSelect" class="block text-sm font-semibold text-gray-700 mb-2">בחר שפה להצגת מגמה:</label>
+          <select id="languageSelect" class="w-full p-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            <option value="">-- בחר שפה --</option>
+          </select>
+        </div>
+        <div class="bg-indigo-50 p-4 mt-4 rounded-xl shadow hidden" id="langChartContainer">
+          <canvas id="langChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('searchForm');
+    const resultsDiv = document.getElementById('results');
+    const hebrewViewsP = document.getElementById('hebrewViews');
+    const otherLanguagesUl = document.getElementById('otherLanguages');
+    const languageSelect = document.getElementById('languageSelect');
+    const langChartCanvas = document.getElementById('langChart');
+    const langChartContainer = document.getElementById('langChartContainer');
+
+    let mainChart, langChart;
+    const languageNames = new Intl.DisplayNames(['he'], { type: 'language' });
+    let globalSitelinks = {};
+    let globalRange = {};
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const articleName = document.getElementById('articleName').value.trim();
+      const dateRange = parseInt(document.getElementById('dateRange').value);
+      if (!articleName) return;
+
+      resultsDiv.classList.add('hidden');
+      hebrewViewsP.textContent = '';
+      otherLanguagesUl.innerHTML = '';
+      languageSelect.innerHTML = '<option value="">-- בחר שפה --</option>';
+      langChartContainer.classList.add('hidden');
+      if (mainChart) mainChart.destroy();
+      if (langChart) langChart.destroy();
+
+      const encodedTitle = encodeURIComponent(articleName.replace(/ /g, '_'));
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(endDate.getDate() - dateRange);
+      const formatDate = (date) => date.toISOString().split('T')[0].replace(/-/g, '') + '00';
+      const start = formatDate(startDate);
+      const end = formatDate(endDate);
+      globalRange = { start, end };
+
+      try {
+        const heRes = await fetch(`https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/he.wikipedia.org/all-access/user/${encodedTitle}/daily/${start}/${end}`);
+        const heData = await heRes.json();
+        const heViews = heData.items.reduce((sum, item) => sum + item.views, 0);
+        hebrewViewsP.textContent = `סה"כ צפיות בעברית: ${heViews.toLocaleString()}`;
+
+        const labels = heData.items.map(item => item.timestamp.slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$3/$2/$1'));
+        const data = heData.items.map(item => item.views);
+        const ctx = document.getElementById('viewsChart').getContext('2d');
+        mainChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'צפיות יומיות בעברית',
+              data,
+              borderColor: 'rgb(99, 102, 241)',
+              backgroundColor: 'rgba(99, 102, 241, 0.2)',
+              fill: true,
+              tension: 0.3
+            }]
+          },
+          options: {
+            responsive: true,
+            scales: {
+              x: { title: { display: true, text: 'תאריך' } },
+              y: { title: { display: true, text: 'מספר צפיות' }, beginAtZero: true }
+            }
+          }
+        });
+
+        const wdRes = await fetch(`https://he.wikipedia.org/w/api.php?action=query&format=json&prop=pageprops&titles=${encodedTitle}&origin=*`);
+        const wdData = await wdRes.json();
+        const page = wdData.query.pages[Object.keys(wdData.query.pages)[0]];
+        const wikidataId = page.pageprops?.wikibase_item;
+        if (!wikidataId) throw new Error('לא נמצא פריט Wikidata');
+
+        const wdEntityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${wikidataId}&format=json&origin=*`);
+        const sitelinks = (await wdEntityRes.json()).entities[wikidataId].sitelinks;
+        globalSitelinks = sitelinks;
+
+        const langDataArray = [];
+
+        for (const key in sitelinks) {
+          if (key.endsWith('wiki') && key !== 'hewiki') {
+            const lang = key.replace('wiki', '');
+            const title = sitelinks[key].title;
+            const encodedLangTitle = encodeURIComponent(title.replace(/ /g, '_'));
+
+            try {
+              const res = await fetch(`https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/${lang}.wikipedia.org/all-access/user/${encodedLangTitle}/daily/${start}/${end}`);
+              const data = await res.json();
+              const totalViews = data.items.reduce((sum, item) => sum + item.views, 0);
+              langDataArray.push({ lang, title, totalViews });
+            } catch {
+              continue;
+            }
+          }
+        }
+
+        langDataArray.sort((a, b) => b.totalViews - a.totalViews);
+        langDataArray.forEach(({ lang, title, totalViews }) => {
+          const articleURL = `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`;
+          const statsURL = `https://pageviews.wmcloud.org/?project=${lang}.wikipedia.org&platform=all-access&agent=user&range=${dateRange}days&pages=${encodeURIComponent(title)}`;
+          const name = languageNames.of(lang);
+
+          const li = document.createElement('li');
+          li.innerHTML = `
+            <div class="flex flex-col md:flex-row md:justify-between md:items-center bg-indigo-50 p-3 rounded-xl shadow-sm">
+              <div><strong>${name} (${lang})</strong> — ${totalViews.toLocaleString()} צפיות</div>
+              <div class="space-x-3 space-x-reverse mt-2 md:mt-0">
+                <a href="${articleURL}" target="_blank" class="text-indigo-600 underline">ערך</a>
+                <a href="${statsURL}" target="_blank" class="text-blue-600 underline">נתונים</a>
+              </div>
+            </div>
+          `;
+          otherLanguagesUl.appendChild(li);
+
+          const option = document.createElement('option');
+          option.value = lang;
+          option.textContent = `${name} (${lang})`;
+          languageSelect.appendChild(option);
+        });
+
+        resultsDiv.classList.remove('hidden');
+      } catch (error) {
+        alert('אירעה שגיאה בקבלת הנתונים. אנא נסה שוב.');
+        console.error(error);
+      }
+    });
+
+    languageSelect.addEventListener('change', async (e) => {
+      const lang = e.target.value;
+      if (!lang || !globalSitelinks[`${lang}wiki`]) {
+        langChartContainer.classList.add('hidden');
+        return;
+      }
+      if (langChart) langChart.destroy();
+      const title = globalSitelinks[`${lang}wiki`].title;
+      const encodedLangTitle = encodeURIComponent(title.replace(/ /g, '_'));
+      try {
+        const res = await fetch(`https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/${lang}.wikipedia.org/all-access/user/${encodedLangTitle}/daily/${globalRange.start}/${globalRange.end}`);
+        const data = await res.json();
+        const labels = data.items.map(item => item.timestamp.slice(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$3/$2/$1'));
+        const views = data.items.map(item => item.views);
+
+        const ctx = langChartCanvas.getContext('2d');
+        langChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: `צפיות יומיות (${lang})`,
+              data: views,
+              borderColor: 'rgb(34, 197, 94)',
+              backgroundColor: 'rgba(34, 197, 94, 0.2)',
+              fill: true,
+              tension: 0.3
+            }]
+          },
+          options: {
+            responsive: true,
+            scales: {
+              x: { title: { display: true, text: 'תאריך' } },
+              y: { title: { display: true, text: 'מספר צפיות' }, beginAtZero: true }
+            }
+          }
+        });
+        langChartContainer.classList.remove('hidden');
+      } catch (err) {
+        alert('שגיאה בטעינת מגמה לשפה זו.');
+        console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>
